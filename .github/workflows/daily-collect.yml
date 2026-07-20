@@ -22,11 +22,11 @@ jobs:
       - name: ✅ 저장소 코드 체크아웃
         uses: actions/checkout@v4
 
-      # 2. Node.js 환경을 설정합니다. (tsx가 Node.js 기반)
-      - name: ⚙️ Node.js 환경 설정 (v20)
+      # 2. Node.js 환경을 설정합니다.
+      - name: ⚙️ Node.js 환경 설정 (v22)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       # 3. npm 의존성 패키지를 설치합니다.
