@@ -1,0 +1,44 @@
+# .github/workflows/daily-collect.yml
+# GitHub Actions를 이용한 매일 자동 리포트 수집 워크플로우입니다.
+# 매일 한국시간(KST) 오전 8시 = UTC 23:00 (전날 기준) 에 자동으로 실행됩니다.
+
+name: 📊 Daily Report Collect & Mail
+
+on:
+  schedule:
+    # KST 08:00 = UTC 23:00 (전날) → "0 23 * * *"
+    - cron: "0 23 * * *"
+
+  # 깃허브 Actions 탭에서 수동으로 즉시 실행할 수 있는 버튼도 제공합니다.
+  workflow_dispatch:
+
+jobs:
+  collect-and-mail:
+    name: 리포트 수집 및 메일 발송
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 소스코드를 체크아웃합니다.
+      - name: ✅ 저장소 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # 2. Node.js 환경을 설정합니다. (tsx가 Node.js 기반)
+      - name: ⚙️ Node.js 환경 설정 (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # 3. npm 의존성 패키지를 설치합니다.
+      - name: 📦 패키지 설치 (npm install)
+        run: npm ci
+
+      # 4. 수집 스크립트를 실행합니다.
+      #    환경 변수는 GitHub 저장소의 Secrets에서 안전하게 불러옵니다.
+      - name: 🚀 리포트 수집 및 이메일 발송 실행
+        env:
+          NEXT_PUBLIC_SUPABASE_URL:    ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY:   ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:              ${{ secrets.RESEND_API_KEY }}
+        run: npm run collect
