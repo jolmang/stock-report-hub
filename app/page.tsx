@@ -77,7 +77,7 @@ const MOCK_REPORTS = [
 ];
 
 // 테마 필터 정의
-const THEMES = ["전체", "반도체", "피지컬 AI", "원자력"];
+const THEMES = ["전체", "반도체", "피지컬 AI", "원자력", "시총 상위 20"];
 
 // Next.js 15 App Router 타입 정의 (searchParams는 비동기 객체로 전달됨)
 interface PageProps {
@@ -154,6 +154,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         return "text-violet-400 bg-violet-950/40 border-violet-800/30";
       case "원자력":
         return "text-amber-400 bg-amber-950/40 border-amber-800/30";
+      case "시총 상위 20":
+        return "text-pink-400 bg-pink-950/40 border-pink-800/30";
       default:
         return "text-slate-400 bg-slate-800/40 border-slate-700/30";
     }
@@ -168,6 +170,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         return <Brain className="w-4 h-4 mr-1.5" />;
       case "원자력":
         return <Flame className="w-4 h-4 mr-1.5" />;
+      case "시총 상위 20":
+        return <Database className="w-4 h-4 mr-1.5" />;
       default:
         return <FileText className="w-4 h-4 mr-1.5" />;
     }
