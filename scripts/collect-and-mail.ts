@@ -1,5 +1,5 @@
 // scripts/collect-and-mail.ts
-// 로컬 테스트용 스크립트: 네이버 증권 + 한경 컨센서스 크롤링, 페이징 순회, 필터링 후 Supabase 적재 및 메일 발송
+// 로컬 테스트용 스크립트: 네이버 증권 (종목분석 + 산업분석) + 한경 컨센서스 크롤링, 페이징 순회, 필터링 후 Supabase 적재 및 메일 발송
 
 import fs from "fs";
 import path from "path";
@@ -61,6 +61,13 @@ const NUCLEAR_KEYWORDS = [
   "두산에너빌리티", "현대건설"
 ];
 
+const TOP20_KEYWORDS = [
+  "LG에너지솔루션", "삼성바이오로직스", "현대차", "기아", "셀트리온", 
+  "KB금융", "POSCO홀딩스", "신한지주", "NAVER", "네이버", 
+  "삼성물산", "삼성SDI", "LG화학", "카카오", "삼성생명", 
+  "하나금융지주", "메리츠금융지주", "현대모비스", "LG전자"
+];
+
 const getTheme = (title: string, stockName: string): string | null => {
   const upperTitle = title.toUpperCase();
   const upperStock = stockName.toUpperCase();
@@ -72,6 +79,7 @@ const getTheme = (title: string, stockName: string): string | null => {
   if (check(SEMICONDUCTOR_KEYWORDS)) return "반도체";
   if (check(PHYSICAL_AI_KEYWORDS)) return "피지컬 AI";
   if (check(NUCLEAR_KEYWORDS)) return "원자력";
+  if (check(TOP20_KEYWORDS)) return "시총 상위 20";
   return null;
 };
 
@@ -84,6 +92,8 @@ async function run() {
   const resend = new Resend(RESEND_API_KEY);
 
   const today = new Date();
+  today.setDate(today.getDate() - 1); // ⭐️ 평일 리포트 테스트를 위해 어제 날짜로 강제 변경
+
   const yy = String(today.getFullYear()).slice(-2);
   const mm = String(today.getMonth() + 1).padStart(2, "0");
   const dd = String(today.getDate()).padStart(2, "0");
@@ -96,161 +106,87 @@ async function run() {
   let results = { crawled: 0, filtered: 0, saved: 0, skipped: 0 };
   const savedReports: any[] = [];
 
+  // 네이버 증권 2종류 게시판 (종목분석, 산업분석) 순회 함수
+  const scrapeNaverBoard = async (boardPath: string, boardName: string) => {
+    console.log(`🌐 네이버 증권 '${boardName}' 크롤링 중...`);
+    let page = 1;
+    let keepLoop = true;
+    
+    while (keepLoop) {
+      console.log(`   - 페이지 ${page} 요청...`);
+      const url = `https://finance.naver.com/research/${boardPath}?page=${page}`;
+      const rawRes = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }});
+      if (!rawRes.ok) {
+        console.log(`   ❌ 페이지 ${page} 요청 실패`);
+        break;
+      }
+
+      const buf = await rawRes.arrayBuffer();
+      const html = new TextDecoder("euc-kr").decode(buf);
+      const $ = cheerio.load(html);
+      
+      const trs = $("table.type_1 tr").toArray();
+      let foundTodayOnThisPage = false;
+
+      for (const tr of trs) {
+        const tds = $(tr).find("td");
+        if (tds.length < 5) continue;
+
+        const stock_name = $(tds[0]).text().trim();
+        const titleLink = $(tds[1]).find("a");
+        const title = titleLink.text().trim();
+        const dateRaw = $(tds[4]).text().trim();
+        
+        if (!stock_name || !title || !dateRaw) continue;
+
+        if (dateRaw !== todayNaverStr) {
+          keepLoop = false;
+          continue; 
+        }
+        
+        foundTodayOnThisPage = true;
+        results.crawled++;
+        
+        const theme = getTheme(title, stock_name);
+        if (!theme) continue;
+
+        results.filtered++;
+        
+        const relativeHref = titleLink.attr("href") || "";
+        const detailUrl = relativeHref ? `https://finance.naver.com/research/${relativeHref}` : "";
+        const pdfLink = $(tds[3]).find("a").attr("href") || "";
+        const report_url = pdfLink || detailUrl;
+        const brokerage = $(tds[2]).text().trim();
+        const published_at = `20${dateRaw.replace(/\./g, "-")}`;
+
+        const { data: existing } = await supabase.from("reports").select("id").eq("title", title).eq("published_at", published_at).maybeSingle();
+        if (existing) { 
+          console.log(`   ⏭️ [중복 스킵] "${title}"`);
+          results.skipped++; 
+          continue; 
+        }
+
+        const { data: inserted, error } = await supabase.from("reports").insert({ title, stock_name, brokerage, report_url, theme, published_at }).select();
+        if (error) {
+          console.error(`   ❌ [DB 에러] "${title}":`, error.message);
+        } else if (inserted?.[0]) { 
+          console.log(`   ✨ [적재 완료] [${theme}] "${stock_name}" - ${title}`);
+          savedReports.push(inserted[0]); 
+          results.saved++; 
+        }
+      }
+
+      if (!foundTodayOnThisPage) keepLoop = false;
+      page++;
+      if (page > 20) break;
+    }
+  };
+
   // ----------------------------------------------------
-  // [A] 네이버 증권 수집
+  // [A] 네이버 증권 수집 실행
   // ----------------------------------------------------
-  console.log("🌐 네이버 증권 크롤링 중...");
-  let naverPage = 1;
-  let keepNaverLoop = true;
-  
-  while (keepNaverLoop) {
-    console.log(`   - 네이버 페이지 ${naverPage} 요청...`);
-    const naverUrl = `https://finance.naver.com/research/company_list.naver?page=${naverPage}`;
-    const rawRes = await fetch(naverUrl, { headers: { "User-Agent": "Mozilla/5.0" }});
-    if (!rawRes.ok) {
-      console.log(`   ❌ 네이버 페이지 ${naverPage} 요청 실패`);
-      break;
-    }
-
-    const buf = await rawRes.arrayBuffer();
-    const html = new TextDecoder("euc-kr").decode(buf);
-    const $ = cheerio.load(html);
-    
-    const trs = $("table.type_1 tr").toArray();
-    let foundTodayOnThisPage = false;
-
-    for (const tr of trs) {
-      const tds = $(tr).find("td");
-      if (tds.length < 5) continue;
-
-      const stock_name = $(tds[0]).find("a").text().trim();
-      const titleLink = $(tds[1]).find("a");
-      const title = titleLink.text().trim();
-      const dateRaw = $(tds[4]).text().trim();
-      
-      if (!stock_name || !title || !dateRaw) continue;
-
-      if (dateRaw !== todayNaverStr) {
-        keepNaverLoop = false;
-        continue; 
-      }
-      
-      foundTodayOnThisPage = true;
-      results.crawled++;
-      
-      const theme = getTheme(title, stock_name);
-      if (!theme) continue;
-
-      results.filtered++;
-      
-      const relativeHref = titleLink.attr("href") || "";
-      const detailUrl = relativeHref ? `https://finance.naver.com/research/${relativeHref}` : "";
-      const pdfLink = $(tds[3]).find("a").attr("href") || "";
-      const report_url = pdfLink || detailUrl;
-      const brokerage = $(tds[2]).text().trim();
-      const published_at = `20${dateRaw.replace(/\./g, "-")}`;
-
-      const { data: existing } = await supabase.from("reports").select("id").eq("title", title).eq("published_at", published_at).maybeSingle();
-      if (existing) { 
-        console.log(`   ⏭️ [중복 스킵] (네이버) "${title}"`);
-        results.skipped++; 
-        continue; 
-      }
-
-      const { data: inserted, error } = await supabase.from("reports").insert({ title, stock_name, brokerage, report_url, theme, published_at }).select();
-      if (error) {
-        console.error(`   ❌ [DB 에러] "${title}":`, error.message);
-      } else if (inserted?.[0]) { 
-        console.log(`   ✨ [적재 완료] (네이버) "${stock_name}" - ${title}`);
-        savedReports.push(inserted[0]); 
-        results.saved++; 
-      }
-    }
-
-    if (!foundTodayOnThisPage) keepNaverLoop = false;
-    naverPage++;
-    if (naverPage > 20) break;
-  }
-
-  // ----------------------------------------------------
-  // [B] 한경 컨센서스 수집
-  // ----------------------------------------------------
-  console.log("🌐 한경 컨센서스 크롤링 중...");
-  let hkPage = 1;
-  let keepHkLoop = true;
-  
-  while (keepHkLoop) {
-    console.log(`   - 한경 페이지 ${hkPage} 요청...`);
-    const hkUrl = `http://consensus.hankyung.com/apps.analysis/analysis.list?sdate=${todayHankyungStr}&edate=${todayHankyungStr}&now_page=${hkPage}`;
-    const rawRes = await fetch(hkUrl, { 
-      headers: { 
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "http://consensus.hankyung.com/"
-      }
-    });
-    
-    if (!rawRes.ok) {
-      console.log(`   ❌ 한경 페이지 ${hkPage} 요청 실패`);
-      break;
-    }
-
-    const buf = await rawRes.arrayBuffer();
-    const html = new TextDecoder("euc-kr").decode(buf);
-    const $ = cheerio.load(html);
-    
-    const trs = $(".table_style01 tbody tr").toArray();
-    
-    if (trs.length === 0 || (trs.length === 1 && $(trs[0]).text().includes("결과가 없습니다"))) {
-       keepHkLoop = false;
-       break;
-    }
-    
-    for (const tr of trs) {
-      const tds = $(tr).find("td");
-      if (tds.length < 6) continue;
-
-      const dateRaw = $(tds[0]).text().trim(); 
-      const titleLink = $(tds[1]).find("a");
-      const title = titleLink.text().trim();
-      const matchStock = title.match(/^\[(.*?)\]/);
-      const stock_name = matchStock ? matchStock[1].trim() : "기업/산업";
-      const brokerage = $(tds[4]).text().trim();
-      
-      const onclickAttr = $(tds[5]).find("a").attr("href") || ""; 
-      const report_url = onclickAttr.includes("downpdf") ? `http://consensus.hankyung.com${onclickAttr}` : hkUrl;
-
-      if (!dateRaw.includes(todayHankyungStr)) {
-          keepHkLoop = false;
-          continue;
-      }
-
-      results.crawled++;
-
-      const theme = getTheme(title, stock_name);
-      if (!theme) continue;
-
-      results.filtered++;
-
-      const { data: existing } = await supabase.from("reports").select("id").eq("title", title).eq("published_at", todayHankyungStr).maybeSingle();
-      if (existing) { 
-        console.log(`   ⏭️ [중복 스킵] (한경) "${title}"`);
-        results.skipped++; 
-        continue; 
-      }
-
-      const { data: inserted, error } = await supabase.from("reports").insert({ title, stock_name, brokerage, report_url, theme, published_at: todayHankyungStr }).select();
-      if (error) {
-        console.error(`   ❌ [DB 에러] "${title}":`, error.message);
-      } else if (inserted?.[0]) { 
-        console.log(`   ✨ [적재 완료] (한경) "${stock_name}" - ${title}`);
-        savedReports.push(inserted[0]); 
-        results.saved++; 
-      }
-    }
-    
-    hkPage++;
-    if (hkPage > 20) break;
-  }
+  await scrapeNaverBoard("company_list.naver", "종목분석");
+  await scrapeNaverBoard("industry_list.naver", "산업분석");
 
   // ----------------------------------------------------
   // [C] 메일 발송 로직
@@ -260,7 +196,7 @@ async function run() {
 
   if (savedReports.length > 0 || results.filtered > 0) {
     console.log(`✉️ 이메일(${RECIPIENT_EMAIL}) 발송 준비...`);
-    const grouped: Record<string, any[]> = { "반도체": [], "피지컬 AI": [], "원자력": [] };
+    const grouped: Record<string, any[]> = { "반도체": [], "피지컬 AI": [], "원자력": [], "시총 상위 20": [] };
     savedReports.forEach(r => { if (grouped[r.theme]) grouped[r.theme].push(r); });
 
     const subject = savedReports.length > 0
