@@ -91,8 +91,7 @@ async function run() {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const resend = new Resend(RESEND_API_KEY);
 
-  const today = new Date();
-  today.setDate(today.getDate() - 1); // ⭐️ 평일 리포트 테스트를 위해 어제 날짜로 강제 변경
+  const today = new Date(); // 항상 오늘 날짜 기준으로 수집 (운영 환경)
 
   const yy = String(today.getFullYear()).slice(-2);
   const mm = String(today.getMonth() + 1).padStart(2, "0");
@@ -203,8 +202,58 @@ async function run() {
       ? `[리포트 허브] ${todayHankyungStr} 테마 리포트 수집 완료 (${savedReports.length}건 신규)`
       : `[리포트 허브] ${todayHankyungStr} 오늘 신규 리포트 없음 (기존 ${results.filtered}건 유지)`;
 
-    // HTML 생성 생략 (본문은 너무 길어져 간단 텍스트 발송 혹은 간략화 - 여기서는 테스트용이므로 간단 HTML 사용)
-    const emailHtml = `<h1>${subject}</h1><p>오늘 신규 수집된 리포트: ${savedReports.length}건</p>`;
+    // ── 이메일 HTML 템플릿 (다크 스타일) ──────────────────────────────────
+    const themeConfig = [
+      { key: "반도체",      color: "#22d3ee", bg: "rgba(6,182,212,0.08)",   border: "rgba(6,182,212,0.25)"  },
+      { key: "피지컬 AI",   color: "#a78bfa", bg: "rgba(139,92,246,0.08)", border: "rgba(139,92,246,0.25)" },
+      { key: "원자력",      color: "#fbbf24", bg: "rgba(245,158,11,0.08)",  border: "rgba(245,158,11,0.25)" },
+      { key: "시총 상위 20",color: "#f472b6", bg: "rgba(244,114,182,0.08)", border: "rgba(244,114,182,0.25)" },
+    ];
+
+    const themeBlocks = themeConfig.map(({ key, color, bg, border }) => {
+      const list = grouped[key];
+      if (!list?.length) return "";
+      return `
+        <div style="margin-bottom:20px;">
+          <h3 style="font-size:13px;font-weight:bold;border-left:3px solid ${color};padding-left:8px;margin:0 0 10px;color:${color};">${key} (${list.length}건)</h3>
+          <div style="background:${bg};border:1px solid ${border};border-radius:10px;padding:8px;">
+            ${list.map(r => `
+              <div style="padding:10px;border-bottom:1px solid rgba(30,41,59,0.4);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+                  <span style="font-size:11px;background:#1e293b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-weight:600;">#${r.stock_name}</span>
+                  <span style="font-size:11px;color:#64748b;">${r.brokerage}</span>
+                </div>
+                <div style="font-size:13px;font-weight:bold;color:#f1f5f9;line-height:1.5;margin-bottom:6px;">${r.title}</div>
+                <div style="text-align:right;">
+                  <a href="${r.report_url}" style="font-size:11px;color:#22d3ee;font-weight:bold;text-decoration:none;">리포트 보기 →</a>
+                </div>
+              </div>`).join("")}
+          </div>
+        </div>`;
+    }).join("");
+
+    const emailHtml = `
+      <!DOCTYPE html><html><head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#020617;font-family:'Malgun Gothic',Arial,sans-serif;color:#f1f5f9;">
+        <div style="max-width:600px;margin:20px auto;padding:32px 20px;background:#0b1329;border:1px solid #1e293b;border-radius:16px;">
+          <div style="text-align:center;border-bottom:1px solid #1e293b;padding-bottom:20px;margin-bottom:24px;">
+            <span style="font-size:11px;font-weight:bold;color:#38bdf8;border:1px solid #0369a1;background:rgba(3,105,161,0.2);padding:4px 10px;border-radius:12px;display:inline-block;margin-bottom:10px;">REPORT COLLECTOR</span>
+            <h1 style="font-size:22px;font-weight:900;margin:0;color:#fff;">오늘의 테마 리포트</h1>
+            <p style="font-size:12px;color:#94a3b8;margin:6px 0 0;">${todayHankyungStr} · 신규 ${savedReports.length}건</p>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:24px;">
+            ${themeConfig.map(({ key, color, bg }) => `
+              <div style="flex:1;min-width:100px;text-align:center;background:${bg};border:1px solid rgba(255,255,255,0.08);padding:10px;border-radius:8px;">
+                <div style="font-size:10px;color:${color};font-weight:bold;">${key}</div>
+                <div style="font-size:18px;font-weight:800;color:#fff;margin-top:2px;">${grouped[key]?.length ?? 0}건</div>
+              </div>`).join("")}
+          </div>
+          ${themeBlocks || `<p style="text-align:center;color:#64748b;font-size:13px;padding:20px 0;">오늘 신규 수집된 리포트가 없습니다.</p>`}
+          <div style="text-align:center;margin-top:28px;padding-top:20px;border-top:1px solid #1e293b;">
+            <p style="font-size:11px;color:#475569;margin:0;">리포트 허브 자동 수집 서비스 · 매일 오전 8시 발송</p>
+          </div>
+        </div>
+      </body></html>`;
 
     try {
       const mailRes = await resend.emails.send({

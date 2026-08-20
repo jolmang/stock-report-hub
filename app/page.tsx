@@ -100,11 +100,18 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   if (supabase) {
     try {
+      // 최근 7일 전 날짜 계산 (5거래일을 커버하기 위해 주말 포함 7일로 설정)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const sevenDaysAgoStr = sevenDaysAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+
       // Supabase 쿼리 빌더 빌드
       let query = supabase
         .from("reports")
         .select("*")
-        .order("published_at", { ascending: false });
+        .gte("published_at", sevenDaysAgoStr) // 7일 이내 데이터만 조회
+        .order("published_at", { ascending: false })
+        .order("created_at", { ascending: false });
 
       // 테마별 필터링
       if (currentTheme !== "전체") {
