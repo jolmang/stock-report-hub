@@ -185,7 +185,7 @@ async function run() {
   // [A] 네이버 증권 수집 실행
   // ----------------------------------------------------
   await scrapeNaverBoard("company_list.naver", "종목분석");
-  await scrapeNaverBoard("industry_list.naver", "산업분석");
+  // await scrapeNaverBoard("industry_list.naver", "산업분석"); // ← 산업분석 제외 (종목분석만 수신)
 
   // ----------------------------------------------------
   // [C] 메일 발송 로직

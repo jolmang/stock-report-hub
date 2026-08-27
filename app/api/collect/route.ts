@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
     // [A] 네이버 증권 종목분석 + 산업분석 수집
     // ----------------------------------------------------
     await scrapeNaverBoard("company_list.naver"); // 종목분석 (국내주식)
-    await scrapeNaverBoard("industry_list.naver"); // 산업분석 (미국주식 및 시황)
+    // await scrapeNaverBoard("industry_list.naver"); // ← 산업분석 제외 (종목분석만 수신)
 
 
     // ----------------------------------------------------
